@@ -1,0 +1,126 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lms}
+      POSTGRES_USER: ${POSTGRES_USER:-lms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  lms-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment: &lms-env
+      SERVER_PORT: 8080
+      LMS_SCHEDULING_ENABLED: "true"
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-lms}
+      DB_USERNAME: ${POSTGRES_USER:-lms}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env (32+ random characters)}
+      LMS_ADMIN_EMAIL: ${LMS_ADMIN_EMAIL:-}
+      LMS_ADMIN_PASSWORD: ${LMS_ADMIN_PASSWORD:-}
+      LMS_ADMIN_NAME: ${LMS_ADMIN_NAME:-Library Admin}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health/readiness || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+  lms-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      <<: *lms-env
+      SERVER_PORT: 8080
+      LMS_SCHEDULING_ENABLED: "false"
+    depends_on:
+      lms-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health/readiness || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+  lms-3:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      <<: *lms-env
+      SERVER_PORT: 8080
+      LMS_SCHEDULING_ENABLED: "false"
+    depends_on:
+      lms-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health/readiness || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    environment:
+      GATEWAY_PORT: 8081
+      LMS_INSTANCE_1_URI: http://lms-1:8080
+      LMS_INSTANCE_2_URI: http://lms-2:8080
+      LMS_INSTANCE_3_URI: http://lms-3:8080
+    ports:
+      - "8080:8081"
+    depends_on:
+      lms-1:
+        condition: service_healthy
+      lms-2:
+        condition: service_healthy
+      lms-3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/actuator/health/readiness || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

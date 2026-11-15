@@ -1,0 +1,36 @@
+
+server:
+  port: ${GATEWAY_PORT:8081}
+
+spring:
+  application:
+    name: lms-gateway
+
+  cloud:
+    discovery:
+      client:
+        simple:
+          instances:
+            lms-service:
+              - uri: ${LMS_INSTANCE_1_URI:http://lms-1:8080}
+              - uri: ${LMS_INSTANCE_2_URI:http://lms-2:8080}
+              - uri: ${LMS_INSTANCE_3_URI:http://lms-3:8080}
+
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: lms-api
+              uri: lb://lms-service
+              predicates:
+                - Path=/**
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
